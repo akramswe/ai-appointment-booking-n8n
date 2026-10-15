@@ -1,5 +1,5 @@
 {
-  "name": "BookingPilot | Customer request to appointment",
+  "name": "BookingPilot | Availability check + alternative suggestions",
   "nodes": [
     {
       "parameters": {
@@ -8,13 +8,13 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "1af62acd-ed46-41b2-a413-b00d4447e8c8",
+      "id": "598f4326-aa8a-550c-8c9d-310ab10f2cad",
       "name": "Incoming appointment request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        260,
-        320
+        220,
+        300
       ]
     },
     {
@@ -26,13 +26,13 @@
         "jsonBody": "={{ JSON.stringify({ message: $json.body.message }) }}",
         "options": {}
       },
-      "id": "954e4c01-5dfe-4542-9eb7-e6daa6213dbc",
-      "name": "Extract details with Python API",
+      "id": "db330994-39d0-53d7-8cf5-0bf776c18374",
+      "name": "Extract booking details",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        510,
-        320
+        450,
+        300
       ]
     },
     {
@@ -47,7 +47,7 @@
           "combinator": "and",
           "conditions": [
             {
-              "id": "4c46ffe7-31b6-41a4-b119-e0962ca4c841",
+              "id": "e9706305-4e40-5079-bdbe-756a37cf0206",
               "leftValue": "={{ $json.ready }}",
               "rightValue": true,
               "operator": {
@@ -59,13 +59,69 @@
         },
         "options": {}
       },
-      "id": "9cebb265-61bc-4818-8cb9-8ba84faf38db",
-      "name": "All fields present?",
+      "id": "4cfc0216-7fe8-5622-a253-25f90ca980f1",
+      "name": "Required fields present?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        750,
-        320
+        690,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/slots",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "day",
+              "value": "={{ $('Extract booking details').first().json.day }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4d0212cd-e342-55ba-bbc0-0689e51d5656",
+      "name": "Check available slots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        930,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "f1043254-0daf-5141-8912-8e4ca47eb8ba",
+              "leftValue": "={{ $json.available.includes($('Extract booking details').first().json.time) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6eedb6fa-0e4f-58ac-bc6c-664f4adc07e0",
+      "name": "Requested slot available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1170,
+        180
       ]
     },
     {
@@ -74,22 +130,43 @@
         "url": "http://api:8000/api/book",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ name: $json.name, email: $json.email, day: $json.day, time: $json.time, service: $json.service }) }}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
-        }
+        "jsonBody": "={{ JSON.stringify({ name: $('Extract booking details').first().json.name, email: $('Extract booking details').first().json.email, day: $('Extract booking details').first().json.day, time: $('Extract booking details').first().json.time, service: $('Extract booking details').first().json.service }) }}",
+        "options": {}
       },
-      "id": "7dec7b45-d5b4-427e-9410-e145417d34c0",
-      "name": "Create appointment + draft",
+      "id": "eedda7ef-10bd-5ae9-9e0a-32bcdfb4b8e9",
+      "name": "Book appointment + create draft",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1010,
-        200
+        1430,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/alternatives",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "day",
+              "value": "={{ $('Extract booking details').first().json.day }}"
+            },
+            {
+              "name": "time",
+              "value": "={{ $('Extract booking details').first().json.time }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "26587d59-ce48-5fb0-8693-891144d8df39",
+      "name": "Suggest alternative slots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1430,
+        310
       ]
     },
     {
@@ -98,28 +175,13 @@
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {}
       },
-      "id": "81a68f1b-6ef6-44f6-819c-3d4dc38804ce",
-      "name": "Return booking result",
+      "id": "81825665-e57d-5a1e-853d-34717a94a44c",
+      "name": "Return customer response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1270,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {}
-      },
-      "id": "e08ad7e6-b8e0-4218-aa43-8e61112106b9",
-      "name": "Ask for missing details",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1010,
-        470
+        1700,
+        330
       ]
     }
   ],
@@ -128,47 +190,87 @@
       "main": [
         [
           {
-            "node": "Extract details with Python API",
+            "node": "Extract booking details",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract details with Python API": {
+    "Extract booking details": {
       "main": [
         [
           {
-            "node": "All fields present?",
+            "node": "Required fields present?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "All fields present?": {
+    "Required fields present?": {
       "main": [
         [
           {
-            "node": "Create appointment + draft",
+            "node": "Check available slots",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Ask for missing details",
+            "node": "Return customer response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Create appointment + draft": {
+    "Check available slots": {
       "main": [
         [
           {
-            "node": "Return booking result",
+            "node": "Requested slot available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requested slot available?": {
+      "main": [
+        [
+          {
+            "node": "Book appointment + create draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Suggest alternative slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book appointment + create draft": {
+      "main": [
+        [
+          {
+            "node": "Return customer response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Suggest alternative slots": {
+      "main": [
+        [
+          {
+            "node": "Return customer response",
             "type": "main",
             "index": 0
           }

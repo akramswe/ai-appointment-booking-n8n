@@ -114,10 +114,70 @@ def test_workflow_export_valid_json_and_connections():
     path = Path(__file__).resolve().parents[1] / 'workflows' / 'appointment-booking.json'
     workflow = json.loads(path.read_text())
     names = {node['name'] for node in workflow['nodes']}
-    assert len(names) == 6
+    assert len(names) == 8
     assert 'Incoming appointment request' in names
-    assert 'Create appointment + draft' in names
-    assert 'Ask for missing details' in names
+    assert 'Check available slots' in names
+    assert 'Requested slot available?' in names
+    assert 'Suggest alternative slots' in names
+    assert 'Return customer response' in names
     assert set(workflow['connections']).issubset(names)
     assert all(tgt['node'] in names for edges in workflow['connections'].values() for path in edges['main'] for tgt in path)
     assert not workflow['active']
+
+
+def test_alternatives_are_actual_available_slots(client):
+    day = future_weekday()
+    first = client.post('/api/book', json=payload(day=day)).json()
+    assert first['status'] == 'booked'
+    result = client.get('/api/alternatives', params={'day': day, 'time': '14:00'})
+    assert result.status_code == 200
+    body = result.json()
+    assert body['status'] == 'slot_unavailable'
+    assert body['requested_time'] == '14:00'
+    assert body['suggested_slots'] == ['14:30', '13:30', '15:00']
+    available = client.get('/api/slots', params={'day': day}).json()['available']
+    assert all(item in available for item in body['suggested_slots'])
+
+
+def test_alternatives_ignore_other_booked_slots(client):
+    day = future_weekday()
+    client.post('/api/book', json=payload(day=day, time='14:00'))
+    client.post('/api/book', json=payload(day=day, time='14:30', email='different@example.com'))
+    body = client.get('/api/alternatives', params={'day': day, 'time': '14:00'}).json()
+    assert '14:00' not in body['suggested_slots']
+    assert '14:30' not in body['suggested_slots']
+    assert body['suggested_slots'][0] == '13:30'
+
+
+def test_alternatives_do_not_offer_weekends(client):
+    candidate = (datetime.now(ZoneInfo('Europe/Vienna')) + timedelta(days=2)).date()
+    while candidate.weekday() != 5:
+        candidate += timedelta(days=1)
+    body = client.get('/api/alternatives',params={'day':candidate.isoformat(),'time':'10:00'}).json()
+    assert body['suggested_slots'] == []
+
+
+def test_alternatives_validate_time(client):
+    day = future_weekday()
+    assert client.get('/api/alternatives', params={'day': day, 'time':'not-a-time'}).status_code == 422
+    assert client.get('/api/alternatives', params={'day': day, 'time':'25:00'}).status_code == 422
+
+
+def test_competing_bookings_also_provide_suggestions(client):
+    day = future_weekday()
+    client.post('/api/book', json=payload(day=day))
+    collision = client.post('/api/book', json=payload(day=day,email='second@example.com'))
+    assert collision.status_code == 200
+    body = collision.json()
+    assert body['status'] == 'slot_unavailable'
+    assert '14:30' in body['suggested_slots']
+    assert len(client.get('/api/outbox').json()['outbox']) == 1
+
+
+def test_workflow_true_and_false_branches():
+    workflow = json.loads((Path(__file__).resolve().parents[1] / 'workflows' / 'appointment-booking.json').read_text())
+    edges = workflow['connections']
+    assert edges['Required fields present?']['main'][1][0]['node'] == 'Return customer response'
+    assert edges['Requested slot available?']['main'][0][0]['node'] == 'Book appointment + create draft'
+    assert edges['Requested slot available?']['main'][1][0]['node'] == 'Suggest alternative slots'
+    assert edges['Suggest alternative slots']['main'][0][0]['node'] == 'Return customer response'

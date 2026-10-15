@@ -12,14 +12,15 @@
 2. Extracts `name`, `email`, `day`, `time`, `service`.
 3. Returns a clarification response when fields are missing.
 4. Checks opening hours, future dates and uniqueness; prevents booking the same 30-minute slot twice.
-5. Saves confirmed appointments to SQLite and creates an **email confirmation draft** for inspection (never sends it).
-6. Lets you see bookings and outbox drafts in a local web dashboard.
+5. When a slot is occupied, suggests up to three real available times from SQLite, closest first.
+6. Saves confirmed appointments to SQLite and creates an **email confirmation draft** for inspection (never sends it).
+7. Lets you see bookings and outbox drafts in a local web dashboard.
 
 **AI note:** Works without credentials using a simple, transparent rule-based parser. With a valid `OPENAI_API_KEY`, it attempts LLM extraction, then falls back to rules if needed. The response includes `parser: "openai"` or `parser: "rules"` so you can tell which mode was actually used. This is **not** a live phone assistant, WhatsApp integration, or real Google Calendar integration.
 
 ## Tech stack
 
-- **n8n:** importable 6-node workflow (`workflows/appointment-booking.json`)
+- **n8n:** importable 8-node workflow (`workflows/appointment-booking.json`)
 - **Python / FastAPI:** parsing and booking endpoints, input validation
 - **SQLite:** appointments and unsent confirmation drafts
 - **Docker Compose:** local n8n and API service
@@ -48,7 +49,7 @@ The web dashboard works **before** you import the n8n workflow. Choose a future 
 
 1. Visit `http://localhost:5678` and complete the n8n setup.
 2. Create/open a workflow, choose **Import from File**, and select `workflows/appointment-booking.json`.
-3. The workflow has 6 nodes: Webhook → Parse (HTTP) → IF → Book (HTTP) → Reply, or request missing details.
+3. The workflow has 8 nodes: Webhook → Parse → IF required fields → GET slots → IF available → Book / Suggest alternatives → One shared reply. Missing details also go to the shared reply.
 4. Click **Listen for test event** on its Webhook node (or execute workflow in test mode, depending on your n8n version).
 5. In a separate terminal run `python scripts/demo.py --target n8n-test` to send a booking for an automatically calculated future weekday. Alternatively, use this curl example (change the date if needed):
 
@@ -58,7 +59,7 @@ curl -X POST 'http://localhost:5678/webhook-test/appointment-assistant' \
   -d '{"message":"Hi, my name is Alex; email alex@example.com; I need a consultation on 2026-11-03 at 14:00."}'
 ```
 
-**Expected:** JSON `status: "booked"` if the slot is available, or `slot_unavailable` if someone booked it first. If you omit a required detail, expect `status: "needs_details"` and a list of missing fields.
+**Expected:** JSON `status: "booked"` if the slot is available. If the slot is occupied or invalid, expect `slot_unavailable` and up to three real `suggested_slots` (e.g. `14:30`, `13:30`, `15:00`). If you omit a required detail, expect `status: "needs_details"` and a list of missing fields.
 
 After test mode, **activate / publish** the workflow in n8n to use the normal endpoint `http://localhost:5678/webhook/appointment-assistant` (version-specific n8n UI wording may differ).
 
@@ -93,7 +94,7 @@ curl -X POST 'http://localhost:8000/api/book' \
   -d '{"name":"Alex","email":"alex@example.com","day":"2026-11-03","time":"11:30","service":"Haircut"}'
 ```
 
-Additional routes: `GET /health`, `GET /api/slots?day=YYYY-MM-DD`, `GET /api/bookings`, `GET /api/outbox`.
+Additional routes: `GET /health`, `GET /api/slots?day=YYYY-MM-DD`, `GET /api/alternatives?day=YYYY-MM-DD&time=HH:MM`, `GET /api/bookings`, `GET /api/outbox`.
 
 ## Run tests
 
@@ -113,7 +114,7 @@ app/
   storage.py             # SQLite schema and persistence
   static/index.html      # local demo dashboard
 workflows/
-  appointment-booking.json  # n8n import
+  appointment-booking.json  # upgraded 8-node n8n import
 scripts/demo.py          # send a test request automatically
 tests/test_api.py        # backend tests
 docs/interview-notes.md # talking points and extensions
@@ -139,11 +140,13 @@ This is a **local learning prototype**, not production-ready software.
 
 - Run an inquiry through the n8n webhook.
 - Show n8n routing on missing fields vs. a complete request.
-- Book the same slot twice to demonstrate conflict prevention.
+- Book the same slot twice to demonstrate conflict prevention and real alternative suggestions.
 - Show the locally saved appointment and **draft** confirmation.
 - Explain why local development differs from secure production deployment.
 
 See `docs/interview-notes.md` for a 60-second demo script and ideas to improve the code yourself.
+
+**Upgrading from the previous version?** See [`docs/UPGRADE-GUIDE.md`](docs/UPGRADE-GUIDE.md) for the exact files and n8n nodes to modify. This upgrade has been unit-tested but live import/execution in n8n needs verification on your machine.
 
 ## License
 

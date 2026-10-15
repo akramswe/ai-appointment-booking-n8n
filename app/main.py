@@ -25,7 +25,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Appointment Booking | n8n Practice", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="AI Appointment Booking | n8n Practice", version="1.1.0", lifespan=lifespan)
 
 
 class CustomerMessage(BaseModel):
@@ -65,14 +65,63 @@ def parse(payload: CustomerMessage):
     return parse_request(payload.message)
 
 
+def _available_slots(day: date, conn: sqlite3.Connection) -> list[str]:
+    """Read available slots from the same SQLite connection used for bookings."""
+    if day.weekday() >= 5 or day < datetime.now(TZ).date():
+        return []
+    taken = {
+        row["time"] for row in conn.execute(
+            "SELECT time FROM appointments WHERE day = ?", (day.isoformat(),)
+        )
+    }
+    now = datetime.now(TZ)
+    return [
+        slot for slot in TIMES
+        if slot not in taken
+        and datetime.combine(day, time.fromisoformat(slot), tzinfo=TZ) > now
+    ]
+
+
+def _alternative_payload(day: date, requested_time: str, conn: sqlite3.Connection) -> dict:
+    """Return up to three *real* free slots, nearest first (later wins ties)."""
+    free = _available_slots(day, conn)
+    requested_minutes = int(requested_time[:2]) * 60 + int(requested_time[3:])
+
+    def rank(slot: str) -> tuple[int, int, str]:
+        minutes = int(slot[:2]) * 60 + int(slot[3:])
+        return abs(minutes - requested_minutes), int(minutes < requested_minutes), slot
+
+    suggested = sorted(free, key=rank)[:3]
+    return {
+        "status": "slot_unavailable",
+        "day": day.isoformat(),
+        "requested_time": requested_time,
+        "suggested_slots": suggested,
+        "reply": (
+            f"{day} at {requested_time} is unavailable. "
+            f"You could try: {', '.join(suggested)} (Europe/Vienna)."
+            if suggested else
+            f"No slots are available for {day}. Please choose a different weekday."
+        ),
+    }
+
+
 @app.get("/api/slots")
 def slots(day: date = Query(...)):
-    if day.weekday() >= 5 or day < datetime.now(TZ).date():
-        return {"day": day.isoformat(), "available": []}
     with connection() as conn:
-        taken = {row["time"] for row in conn.execute("SELECT time FROM appointments WHERE day = ?", (day.isoformat(),))}
-    available = [slot for slot in TIMES if slot not in taken and datetime.combine(day, time.fromisoformat(slot), tzinfo=TZ) > datetime.now(TZ)]
+        available = _available_slots(day, conn)
     return {"day": day.isoformat(), "available": available}
+
+
+@app.get("/api/alternatives")
+def alternatives(day: date = Query(...), time: str = Query(..., pattern=r"^\d{2}:\d{2}$")):
+    """Suggest actual open slots on the requested date; never make a booking."""
+    try:
+        parsed_time = datetime.strptime(time, "%H:%M").strftime("%H:%M")
+    except ValueError:
+        raise HTTPException(422, "time must be HH:MM")
+    with connection() as conn:
+        return _alternative_payload(day, parsed_time, conn)
 
 
 @app.post("/api/book")
@@ -89,7 +138,9 @@ def book(booking: Booking):
                 (booking.name.strip(), email, booking.service, day, booking.time),
             )
         except sqlite3.IntegrityError:
-            return {"status": "slot_unavailable", "reply": f"Sorry, {day} at {booking.time} is already booked. Please choose another slot."}
+            # Recheck availability if another customer booked between the
+            # n8n availability check and this insert (race condition).
+            return _alternative_payload(booking.day, booking.time, conn)
         booking_id = cursor.lastrowid
         message = (
             f"Hello {booking.name.strip()},\n\nYour {booking.service.lower()} is booked for "
