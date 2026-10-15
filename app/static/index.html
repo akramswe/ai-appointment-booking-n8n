@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BookingPilot · AI Appointment Automation Demo</title>
+  <style>
+    :root { color-scheme: light; --ink:#19212d; --muted:#637184; --primary:#5b46db; --border:#dfe5ef; --bg:#f5f7fb; --surface:#fff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:15px/1.6 system-ui, -apple-system, Segoe UI, sans-serif; color:var(--ink); background:var(--bg); }
+    header { background:linear-gradient(125deg,#17213d,#332079); padding:44px 20px; color:#fff; }
+    .inner { max-width:1080px; margin:auto; }
+    .eyebrow { letter-spacing:.12em; text-transform:uppercase; font-size:12px; color:#c5bbff; font-weight:700; }
+    h1 { margin:8px 0; font-size:clamp(27px,4vw,40px); line-height:1.2; }
+    header p { color:#e2dcff; max-width:690px; margin:12px 0 0; }
+    main { max-width:1080px; margin:24px auto 60px; padding:0 20px; }
+    .grid { display:grid; grid-template-columns: 1.25fr 1fr; gap:18px; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; box-shadow:0 6px 22px rgba(28,42,80,.04); }
+    h2 { font-size:19px; margin:0 0 8px; }
+    .sub { color:var(--muted); font-size:13px; margin:0 0 16px; }
+    label { display:block; font-weight:650; margin-bottom:8px; }
+    textarea { width:100%; min-height:140px; border:1px solid #ccd4e2; border-radius:10px; padding:13px; resize:vertical; font:inherit; }
+    textarea:focus { outline:2px solid #b7b0f7; border-color:var(--primary); }
+    button { border:0; border-radius:10px; background:var(--primary); color:#fff; padding:11px 18px; font-weight:650; cursor:pointer; font:inherit; }
+    button.secondary { background:#edeaff; color:#3b2e99; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+    #details, #booking-result { padding:15px; border:1px solid var(--border); border-radius:12px; background:#fafbfe; margin-top:12px; }
+    #details p { margin:3px 0; } .small { font-size:13px; color:var(--muted); }
+    .notice { background:#fff4de; border:1px solid #edd59f; border-radius:10px; padding:12px; font-size:13px; }
+    .status { min-height:24px; color:var(--muted); font-size:13px; }
+    .span { grid-column:1/-1; }
+    .tables { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .entry { padding:11px 0; border-top:1px solid var(--border); font-size:13px; }
+    .entry:first-child { border-top:0; }
+    code { background:#f0efff; border-radius:5px; padding:2px 5px; overflow-wrap:anywhere; }
+    footer { margin-top:16px; color:var(--muted); font-size:12px; }
+    @media (max-width:760px) { .grid, .tables { grid-template-columns:1fr; } header { padding:30px 20px; } }
+  </style>
+</head>
+<body>
+  <header><div class="inner">
+    <div class="eyebrow">Portfolio practice · n8n + Python</div>
+    <h1>BookingPilot <span aria-hidden="true">↗</span></h1>
+    <p>From a customer message to an appointment and confirmation draft. A safe, local demonstration of an AI-assisted booking workflow.</p>
+  </div></header>
+  <main>
+    <div class="grid">
+      <section class="card">
+        <h2>1. Try a customer request</h2>
+        <p class="sub">The free rule-based parser expects an ISO date and time. Add an OpenAI key for optional LLM parsing.</p>
+        <label for="message">Customer message</label>
+        <textarea id="message" spellcheck="false"></textarea>
+        <div class="actions">
+          <button id="parse">Extract appointment details</button>
+          <button class="secondary" id="example">Reset example</button>
+        </div>
+        <div id="parse-status" class="status" aria-live="polite"></div>
+        <div id="details" hidden></div>
+        <div class="actions"><button id="book" disabled>2. Book this appointment</button></div>
+        <div id="booking-result" aria-live="polite" hidden></div>
+      </section>
+      <section class="card">
+        <h2>How it works</h2>
+        <p class="sub">The n8n version uses the same backend via an HTTP workflow.</p>
+        <p><strong>① Webhook</strong> accepts the customer message.</p>
+        <p><strong>② Extract</strong> recognizes contact and appointment fields.</p>
+        <p><strong>③ Route</strong> checks whether the request is complete.</p>
+        <p><strong>④ Reserve</strong> books one free slot in SQLite.</p>
+        <p><strong>⑤ Confirm</strong> returns a response and creates an <em>unsent</em> email draft.</p>
+        <div class="notice"><strong>Demo safety:</strong> This app does not send emails or make phone calls. Bookings are stored locally. Do not expose the demo publicly without authentication.</div>
+        <p class="small" style="margin-top:16px">Workflow import: <code>workflows/appointment-booking.json</code><br />API documentation: <a href="/docs">/docs</a></p>
+      </section>
+      <section class="card span">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap">
+          <div><h2>Local activity</h2><p class="sub">Booked slots and confirmation drafts (never sent).</p></div>
+          <button class="secondary" id="refresh">Refresh activity</button>
+        </div>
+        <div class="tables">
+          <div><h3>Appointments</h3><div id="bookings" class="small">Loading…</div></div>
+          <div><h3>Confirmation outbox</h3><div id="outbox" class="small">Loading…</div></div>
+        </div>
+      </section>
+    </div>
+    <footer>Built as a portfolio learning project · Time zone: Europe/Vienna · Not a production scheduling system</footer>
+  </main>
+<script>
+  let extracted = null;
+  const $ = id => document.getElementById(id);
+  const clean = text => String(text ?? '');
+  function sample() {
+    let date = new Date();
+    date.setDate(date.getDate() + 3);
+    while ([0, 6].includes(date.getDay())) date.setDate(date.getDate() + 1);
+    const day = [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-');
+    $('message').value = `Hello, my name is Alex; email alex@example.com; I'd like a consultation on ${day} at 14:00.`;
+    $('details').hidden = true; $('booking-result').hidden = true; $('book').disabled = true; extracted = null;
+    $('parse-status').textContent = '';
+  }
+  async function api(path, options) {
+    const res = await fetch(path, options);
+    const payload = await res.json();
+    if (!res.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : `Request failed: ${res.status}`);
+    return payload;
+  }
+  const post = body => ({ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  async function parse() {
+    $('parse-status').textContent = 'Extracting details…'; $('book').disabled = true;
+    $('booking-result').hidden = true;
+    try {
+      extracted = await api('/api/parse', post({message:$('message').value}));
+      const el = $('details'); el.replaceChildren();
+      for (const key of ['name','email','day','time','service']) {
+        const line = document.createElement('p');
+        const strong = document.createElement('strong'); strong.textContent = `${key}: `;
+        line.append(strong, document.createTextNode(clean(extracted[key] || 'Not provided')));
+        el.appendChild(line);
+      }
+      const detail = document.createElement('p'); detail.className='small';
+      detail.textContent = `Parser: ${extracted.parser}. ${extracted.reply}`;
+      el.appendChild(detail); el.hidden = false;
+      $('book').disabled = !extracted.ready;
+      $('parse-status').textContent = extracted.ready ? 'Ready to request booking.' : 'More information needed.';
+    } catch (err) { $('parse-status').textContent = `Error: ${err.message}`; }
+  }
+  async function book() {
+    if (!extracted?.ready) return;
+    $('book').disabled = true;
+    try {
+      const result = await api('/api/book', post(extracted));
+      $('booking-result').hidden = false;
+      $('booking-result').textContent = result.reply;
+      await refresh();
+    } catch (err) { $('booking-result').hidden=false; $('booking-result').textContent=`Error: ${err.message}`; }
+  }
+  async function refresh() {
+    try {
+      const [appointments, drafts] = await Promise.all([api('/api/bookings'), api('/api/outbox')]);
+      renderList('bookings', appointments.bookings, item => `${item.day} ${item.time} — ${item.customer_name} (${item.service})`);
+      renderList('outbox', drafts.outbox, item => `${item.recipient} — ${item.subject} [${item.status}]`);
+    } catch (err) { $('bookings').textContent = err.message; $('outbox').textContent = err.message; }
+  }
+  function renderList(id, items, describe) {
+    const root = $(id); root.replaceChildren();
+    if (!items.length) { root.textContent='No entries yet.'; return; }
+    items.forEach(item => { const div = document.createElement('div'); div.className='entry'; div.textContent=describe(item); root.appendChild(div); });
+  }
+  $('example').addEventListener('click', sample);
+  $('parse').addEventListener('click', parse);
+  $('book').addEventListener('click', book);
+  $('refresh').addEventListener('click', refresh);
+  sample(); refresh();
+</script>
+</body>
+</html>

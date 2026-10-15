@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DATABASE_PATH: /data/bookings.sqlite3
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+    volumes:
+      - booking_data:/data
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: Europe/Vienna
+      TZ: Europe/Vienna
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - api
+volumes:
+  booking_data:
+  n8n_data:

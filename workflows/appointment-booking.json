@@ -1,0 +1,186 @@
+{
+  "name": "BookingPilot | Customer request to appointment",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "appointment-assistant",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1af62acd-ed46-41b2-a413-b00d4447e8c8",
+      "name": "Incoming appointment request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/parse",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: $json.body.message }) }}",
+        "options": {}
+      },
+      "id": "954e4c01-5dfe-4542-9eb7-e6daa6213dbc",
+      "name": "Extract details with Python API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        510,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "4c46ffe7-31b6-41a4-b119-e0962ca4c841",
+              "leftValue": "={{ $json.ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9cebb265-61bc-4818-8cb9-8ba84faf38db",
+      "name": "All fields present?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        750,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/book",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, email: $json.email, day: $json.day, time: $json.time, service: $json.service }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "7dec7b45-d5b4-427e-9410-e145417d34c0",
+      "name": "Create appointment + draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1010,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "81a68f1b-6ef6-44f6-819c-3d4dc38804ce",
+      "name": "Return booking result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1270,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "e08ad7e6-b8e0-4218-aa43-8e61112106b9",
+      "name": "Ask for missing details",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1010,
+        470
+      ]
+    }
+  ],
+  "connections": {
+    "Incoming appointment request": {
+      "main": [
+        [
+          {
+            "node": "Extract details with Python API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract details with Python API": {
+      "main": [
+        [
+          {
+            "node": "All fields present?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All fields present?": {
+      "main": [
+        [
+          {
+            "node": "Create appointment + draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ask for missing details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create appointment + draft": {
+      "main": [
+        [
+          {
+            "node": "Return booking result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Vienna"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}
